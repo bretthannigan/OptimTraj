@@ -1,12 +1,6 @@
-% MAIN.m  --  Five Link Biped trajectory optimization
+% MAIN.m  --  OpenSim Model Dynamics Interface
 %
-% This script sets up and then solves the optimal trajectory for the five
-% link biped, assuming that the walking gait is compused of single-stance
-% phases of motion connected by impulsive heel-strike (no double-stance or
-% flight phases).
-%
-% The equations of motion and gradients are all derived by:
-%   --> Derive_Equations.m 
+% This script interfaces with an OpenSim model's dynamics.
 %
 
 clc; clear; 
@@ -15,82 +9,60 @@ addpath ../../
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 %                       Set up parameters and options                     %
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
-param = getPhysicalParameters();
 
-param.stepLength = 0.5;
-param.stepTime = 0.7;
+import org.opensim.modeling.*
+geometryPath = 'C:\Users\bchannig\Documents\OpenSim\4.0\Geometry';
+modelPath = 'C:\Users\bchannig\Documents\MATLAB\Lee2016\OsimModels\LowerLimb_v4.osim';
+ModelVisualizer.addDirToGeometrySearchPaths(geometryPath);
+osimModel = Model(modelPath);
+
+param = getOsimParameters(osimModel);
+param.stateCst = readStoFile();
+if ~all(ismember(param.stateCst.stateNames, param.xNames))
+    % Error - states in stateNames that are not in model.
+end
 
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 %                       Set up function handles                           %
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 
-problem.func.dynamics =  @(t,x,u)( dynamics(t,x,u,param) );
+problem.func.dynamics =  @(t,x,u)( dynamics_OpenSim(t,x,u,param) );
 
-problem.func.pathObj = @(t,x,u)( obj_torqueSquared(u) );
+problem.func.pathObj = @(t,x,u)( obj_actSquared_OpenSim(u) );
 
-problem.func.bndCst = @(t0,x0,tF,xF)( stepConstraint(x0,xF,param) );
+%problem.func.bndCst = @(t0,x0,tF,xF)( stepConstraint(x0,xF,param) );
 
-problem.func.pathCst = @(t,x,u)( pathConstraint(x) );
+%problem.func.pathCst = @(t,x,u)( pathConstraint(x) );
 
 
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 %               Set up bounds on time, state, and control                 %
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 
-problem.bounds.initialTime.low = 0;
-problem.bounds.initialTime.upp = 0;
-problem.bounds.finalTime.low = param.stepTime;
-problem.bounds.finalTime.upp = param.stepTime;
+eps = 1e-3;
 
-% State: (absolute reference frames)
-%   1 = stance leg tibia angle
-%   2 = stance leg femur angle
-%   3 = torso angle
-%   4 = swing leg femur angle
-%   5 = swing leg tibia angle
+problem.bounds.initialTime.low = param.stateCst.time(1) - eps;
+problem.bounds.initialTime.upp = param.stateCst.time(1) + eps;
+problem.bounds.finalTime.low = param.stateCst.time(end) - eps;
+problem.bounds.finalTime.upp = param.stateCst.time(end) + eps;
 
-qLow = (-pi/2)*ones(5,1);
-qUpp = (pi/2)*ones(5,1);
-dqLow = -10*ones(5,1);
-dqUpp = 10*ones(5,1);
-problem.bounds.state.low = [qLow; dqLow];
-problem.bounds.state.upp = [qUpp; dqUpp];
-problem.bounds.initialstate.low = [qLow; dqLow];
-problem.bounds.initialstate.upp = [qUpp; dqUpp];
-problem.bounds.finalstate.low = [qLow; dqLow];
-problem.bounds.finalstate.upp = [qUpp; dqUpp];
+problem.bounds.state.low = param.xMin - eps;
+problem.bounds.state.upp = param.xMax + eps;
+problem.bounds.initialState.low = [-0.02467413-eps; -eps; -0.74652253-eps; -eps; 0.00000053-eps; -eps; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf];%param.stateCst.states(:,1) - eps;
+problem.bounds.initialState.upp = [-0.02467413+eps; eps; -0.74652253+eps; eps; 0.00000053+eps; eps; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf];%param.stateCst.states(:,1) + eps;
+problem.bounds.finalState.low = [-0.02467413-eps; -eps; -0.74652253-eps; -eps; 0.00000053-eps; -eps; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf];%[1.48352986-eps; -eps; -1.39626340-eps; -eps; -eps; -eps; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf; -Inf];%param.stateCst.states(:,end) - eps;
+problem.bounds.finalState.upp = [-0.02467413+eps; eps; -0.74652253+eps; eps; 0.00000053+eps; eps; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf];%[1.48352986+eps; eps; -1.39626340+eps; eps; eps; eps; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf; Inf];%param.stateCst.states(:,end) + eps;
 
-uMax = 100;  %Nm
-problem.bounds.control.low = -uMax*ones(5,1);
-problem.bounds.control.upp = uMax*ones(5,1);
-
-% Disable the stance ankle motor:
-problem.bounds.control.low(1) = 0;
-problem.bounds.control.upp(1) = 0;
-
+problem.bounds.control.low = param.uMin;
+problem.bounds.control.upp = param.uMax;
 
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 %              Create an initial guess for the trajectory                 %
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 
-% For now, just assume a linear trajectory between boundary values
-
-problem.guess.time = [0, param.stepTime];
-
-q0 = [...
-    -0.3; % stance leg tibia angle
-    0.7; % stance leg femur angle
-    0.0; % torso angle
-    -0.5; % swing leg femur angle
-    -0.6]; % swing leg tibia angle
-qF = q0([5;4;3;2;1]);   %Flip left-right
-
-dq0 = (qF-q0)/param.stepTime;
-dqF = dq0;
-
-problem.guess.state = [q0, qF; dq0, dqF];
-
-problem.guess.control = zeros(5,2);  %Start with passive trajectory
+problem.guess.time = param.stateCst.time;%[param.stateCst.time(1) param.stateCst.time(end)];
+problem.guess.state = param.stateCst.states;%[param.stateCst.states(:,1) param.stateCst.states(:,end)];
+problem.guess.control = 0.02*(ones(param.nu, length(param.stateCst.time)) + eps);%param.uMin*(ones(1, length(param.stateCst.time)) + eps);  %Start with passive trajectory
 
 
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
@@ -116,11 +88,11 @@ method = 'chebyshev';
 problem.options(1).nlpOpt = optimset(...
     'Display','iter',...   % {'iter','final','off'}
     'TolFun',1e-3,...
-    'MaxFunEvals',1e4);   %options for fmincon
-problem.options(2).nlpOpt = optimset(...
-    'Display','iter',...   % {'iter','final','off'}
-    'TolFun',1e-6,...
-    'MaxFunEvals',5e4);   %options for fmincon
+    'MaxFunEvals',1e6);   %options for fmincon
+% problem.options(2).nlpOpt = optimset(...
+%     'Display','iter',...   % {'iter','final','off'}
+%     'TolFun',1e-6,...
+%     'MaxFunEvals',5e5);   %options for fmincon
 
 switch method
     
@@ -128,8 +100,8 @@ switch method
         problem.options(1).method = 'trapezoid'; % Select the transcription method
         problem.options(1).trapezoid.nGrid = 10;  %method-specific options
         
-        problem.options(2).method = 'trapezoid'; % Select the transcription method
-        problem.options(2).trapezoid.nGrid = 25;  %method-specific options
+        %problem.options(2).method = 'trapezoid'; % Select the transcription method
+        %problem.options(2).trapezoid.nGrid = 25;  %method-specific options
         
     case 'trapGrad'  %trapezoid with analytic gradients
         
@@ -174,9 +146,9 @@ switch method
         problem.options(1).method = 'chebyshev'; % Select the transcription method
         problem.options(1).chebyshev.nColPts = 9;  %method-specific options
         
-        % Second iteration: refine guess to get precise soln
-        problem.options(2).method = 'chebyshev'; % Select the transcription method
-        problem.options(2).chebyshev.nColPts = 15;  %method-specific options
+%         % Second iteration: refine guess to get precise soln
+%         problem.options(2).method = 'chebyshev'; % Select the transcription method
+%         problem.options(2).chebyshev.nColPts = 50;  %method-specific options
         
     case 'multiCheb'
         
@@ -230,41 +202,36 @@ soln = optimTraj(problem);
 
 % Transcription Grid points:
 t = soln(end).grid.time;
-q = soln(end).grid.state(1:5,:);
-dq = soln(end).grid.state(6:10,:);
+q = soln(end).grid.state;
 u = soln(end).grid.control;
 
+save('block.mat', 't', 'q', 'u', 'soln');
 
-%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
-%                     Plot the solution                                   %
-%~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
-
-%Anim.figNum = 1; clf(Anim.figNum);
-Anim.speed = 0.25;
-Anim.plotFunc = @(t,q)( drawRobot(q,param) );
-Anim.verbose = true;
-animate(t,q,Anim);
-
-figure(2); clf;
-subplot(1,2,1);
-plot(t,q);
-legend('q1','q2','q3','q4','q5');
-xlabel('time')
-ylabel('link angles')
-subplot(1,2,2);
-plot(t,u);
-legend('u1','u2','u3','u4','u5');
-xlabel('time')
-ylabel('joint torques')
-
-if isfield(soln(1).info,'sparsityPattern')
-   figure(3); clf;
-   spy(soln(1).info.sparsityPattern.equalityConstraint);
-   axis equal
-   title('Sparsity pattern in equality constraints')
-end
-
-
-
-
-
+% %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
+% %                     Plot the solution                                   %
+% %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
+% 
+% %Anim.figNum = 1; clf(Anim.figNum);
+% Anim.speed = 0.25;
+% Anim.plotFunc = @(t,q)( drawRobot(q,param) );
+% Anim.verbose = true;
+% animate(t,q,Anim);
+% 
+% figure(2); clf;
+% subplot(1,2,1);
+% plot(t,q);
+% legend('q1','q2','q3','q4','q5');
+% xlabel('time')
+% ylabel('link angles')
+% subplot(1,2,2);
+% plot(t,u);
+% legend('u1','u2','u3','u4','u5');
+% xlabel('time')
+% ylabel('joint torques')
+% 
+% if isfield(soln(1).info,'sparsityPattern')
+%    figure(3); clf;
+%    spy(soln(1).info.sparsityPattern.equalityConstraint);
+%    axis equal
+%    title('Sparsity pattern in equality constraints')
+% end
